@@ -1,0 +1,134 @@
+---
+title: "R Notebook"
+runtime: shiny
+output: html_notebook
+---
+
+```{r echo = FALSE, message=F}
+require(shiny)
+require(reshape2)
+
+ui <- fluidPage(
+  
+  sidebarLayout(position="left",
+                # creates upload button
+                sidebarPanel(
+                
+                fileInput("upload", "Choose CSV file", multiple = FALSE,
+                          accept = c("text/csv","text/comma-separated-values,text/plain",".csv"),
+                          width = NULL, buttonLabel = "Browse...",
+                          placeholder = "No file selected"),
+                
+                # creates dropdown menu based on the column names of the upload
+                # for creating group variable (concatenates multiple columns if needed)
+                selectInput("group", "Choose group variable(s)", choices = c(), multiple = T),
+                
+                # creates dropdown menu based on the column names of the upload
+                # for removing non-data columns, leaving only data and group for the pivot
+                selectInput("remove", "Choose non-data variable(s)", choices = c(), multiple = T),
+                
+                # button to start conversion process
+                actionButton("click","Convert File"),
+                
+                # button to start download
+                downloadButton("download", "Download .csv")
+                
+                ),
+  
+  mainPanel(
+    fluidRow(
+      verticalLayout(tableOutput("pivot"),tableOutput("df_new"))
+      )
+    )
+  )
+)
+
+server <- function(input, output, session) {
+  
+  # waits for file upload then reads csv
+  data <- reactive({
+    req(input$upload)
+    df <- read.csv(
+      input$upload$datapath,
+      header = T,
+      sep = ",",
+      quote = 
+    )
+  })
+  
+  # waits for file upload, then pulls column names for group dropdown
+  data2 <- reactive({
+    df2 <- data()
+    updateSelectInput(session,"group",choices=colnames(df2))
+    return(df2)
+  })
+  
+  # outputs results for group concatenation
+  group_new<-reactive(
+    if (length(input$group) == 1){
+      return(data2()[,input$group])
+    }else{
+      return(apply(data2()[,input$group] , 1 , paste , collapse = "-" ))
+    }
+  )
+  
+  # waits for file upload, then pulls column names for remove dropdown
+  data3 <- reactive({
+    df3 <- data()
+    updateSelectInput(session,"remove",choices=colnames(df3))
+    return(df3)
+  })
+  
+  # outputs columns for removal
+  remove<-reactive(
+    if (length(input$remove) < 1){
+      return(data3())
+    }else{
+      return(data3()[,!colnames(data3())%in%input$remove])
+    }
+  )
+  
+  # outputs new df for recasting
+  df_new<-reactive(
+    if(sum(nchar(group_new())<1)){
+      return(remove())
+    }else{
+      return(data.frame(group_new(),remove()))
+    }
+  )
+  
+  # checks for upload, runs pivot code after actionbutton press
+  pivot<-eventReactive(input$click, {
+    runif(input$upload)
+    dat<-data.frame(df_new())
+    DF<-melt(dat)
+    DF$seq <- with(DF, ave(value, group_new.., variable, FUN = seq_along))
+    collect<-dcast(variable + seq ~ group_new.., data = DF, value.var = "value")
+    collect2<-collect[,colnames(collect)!="seq"]
+    return(collect2)
+  })
+  
+  # outputs data head or full dataset for original df
+  output$df_new<-renderTable(
+    return(head(df_new()))
+  )
+  
+  # outputs data head or full dataset for new df
+  output$pivot<-renderTable(
+    return(head(pivot()))
+  )
+  
+  # creates file to download after button is hit, then handles download
+  output$download <- downloadHandler(
+    filename = function() {
+      paste0("pivoted_",input$upload)
+    },
+    content = function(file) {
+      write.csv(pivot(), file, row.names = F)
+    }
+  )
+  
+}
+
+shinyApp(ui, server)
+```
